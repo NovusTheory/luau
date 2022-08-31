@@ -11,6 +11,33 @@ using namespace Luau;
 
 TEST_SUITE_BEGIN("DefinitionTests");
 
+TEST_CASE_FIXTURE(Fixture, "definition_file_simple")
+{
+    loadDefinition(R"(
+        declare foo: number
+        declare function bar(x: number): string
+        declare foo2: typeof(foo)
+    )");
+
+    TypeId globalFooTy = getGlobalBinding(frontend.typeChecker, "foo");
+    CHECK_EQ(toString(globalFooTy), "number");
+
+    TypeId globalBarTy = getGlobalBinding(frontend.typeChecker, "bar");
+    CHECK_EQ(toString(globalBarTy), "(number) -> string");
+
+    TypeId globalFoo2Ty = getGlobalBinding(frontend.typeChecker, "foo2");
+    CHECK_EQ(toString(globalFoo2Ty), "number");
+
+    CheckResult result = check(R"(
+        local x: number = foo - 1
+        local y: string = bar(x)
+        local z: number | string = x
+        z = y
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
 TEST_CASE_FIXTURE(Fixture, "definition_file_loading")
 {
     loadDefinition(R"(
@@ -307,6 +334,32 @@ local s : Cls = GetCls()
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "class_definition_overload_metamethods")
+{
+    loadDefinition(R"(
+        declare class Vector3
+        end
+
+        declare class CFrame
+            function __mul(self, other: CFrame): CFrame
+            function __mul(self, other: Vector3): Vector3
+        end
+
+        declare function newVector3(): Vector3
+        declare function newCFrame(): CFrame
+    )");
+
+    CheckResult result = check(R"(
+        local base = newCFrame()
+        local shouldBeCFrame = base * newCFrame()
+        local shouldBeVector = base * newVector3()
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ(toString(requireType("shouldBeCFrame")), "CFrame");
+    CHECK_EQ(toString(requireType("shouldBeVector")), "Vector3");
 }
 
 TEST_SUITE_END();

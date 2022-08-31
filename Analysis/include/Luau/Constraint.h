@@ -4,6 +4,7 @@
 #include "Luau/Ast.h" // Used for some of the enumerations
 #include "Luau/NotNull.h"
 #include "Luau/Variant.h"
+#include "Luau/TypeVar.h"
 
 #include <string>
 #include <memory>
@@ -34,12 +35,11 @@ struct PackSubtypeConstraint
     TypePackId superPack;
 };
 
-// subType ~ gen superType
+// generalizedType ~ gen sourceType
 struct GeneralizationConstraint
 {
     TypeId generalizedType;
     TypeId sourceType;
-    Scope* scope;
 };
 
 // subType ~ inst superType
@@ -71,19 +71,27 @@ struct NameConstraint
     std::string name;
 };
 
+// target ~ inst target
+struct TypeAliasExpansionConstraint
+{
+    // Must be a PendingExpansionTypeVar.
+    TypeId target;
+};
+
 using ConstraintV = Variant<SubtypeConstraint, PackSubtypeConstraint, GeneralizationConstraint, InstantiationConstraint, UnaryConstraint,
-    BinaryConstraint, NameConstraint>;
+    BinaryConstraint, NameConstraint, TypeAliasExpansionConstraint>;
 using ConstraintPtr = std::unique_ptr<struct Constraint>;
 
 struct Constraint
 {
-    explicit Constraint(ConstraintV&& c);
+    Constraint(ConstraintV&& c, NotNull<Scope> scope);
 
     Constraint(const Constraint&) = delete;
     Constraint& operator=(const Constraint&) = delete;
 
     ConstraintV c;
     std::vector<NotNull<Constraint>> dependencies;
+    NotNull<Scope> scope;
 };
 
 inline Constraint& asMutable(const Constraint& c)

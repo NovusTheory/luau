@@ -1,7 +1,8 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/Ast.h"
-#include "Luau/JsonEncoder.h"
+#include "Luau/AstJsonEncoder.h"
 #include "Luau/Parser.h"
+#include "ScopedFlags.h"
 
 #include "doctest.h"
 
@@ -175,13 +176,25 @@ TEST_CASE_FIXTURE(JsonEncoderFixture, "encode_AstExprIfThen")
     CHECK(toJson(statement) == expected);
 }
 
+TEST_CASE_FIXTURE(JsonEncoderFixture, "encode_AstExprInterpString")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    AstStat* statement = expectParseStatement("local a = `var = {x}`");
+
+    std::string_view expected =
+        R"({"type":"AstStatLocal","location":"0,0 - 0,17","vars":[{"luauType":null,"name":"a","type":"AstLocal","location":"0,6 - 0,7"}],"values":[{"type":"AstExprInterpString","location":"0,10 - 0,17","strings":["var = ",""],"expressions":[{"type":"AstExprGlobal","location":"0,18 - 0,19","global":"x"}]}]})";
+
+    CHECK(toJson(statement) == expected);
+}
 
 TEST_CASE("encode_AstExprLocal")
 {
     AstLocal local{AstName{"foo"}, Location{}, nullptr, 0, 0, nullptr};
     AstExprLocal exprLocal{Location{}, &local, false};
 
-    CHECK(toJson(&exprLocal) == R"({"type":"AstExprLocal","location":"0,0 - 0,0","local":{"luauType":null,"name":"foo","type":"AstLocal","location":"0,0 - 0,0"}})");
+    CHECK(toJson(&exprLocal) ==
+          R"({"type":"AstExprLocal","location":"0,0 - 0,0","local":{"luauType":null,"name":"foo","type":"AstLocal","location":"0,0 - 0,0"}})");
 }
 
 TEST_CASE("encode_AstExprVarargs")

@@ -1547,7 +1547,6 @@ caused by:
   Argument count mismatch. Function expects 1 argument, but none are specified)",
             toString(result.errors[0]));
     }
-
 }
 
 TEST_CASE_FIXTURE(Fixture, "too_few_arguments_variadic")
@@ -1638,7 +1637,6 @@ TEST_CASE_FIXTURE(Fixture, "quantify_constrained_types")
 {
     ScopedFastFlag sff[]{
         {"LuauLowerBoundsCalculation", true},
-        {"LuauQuantifyConstrained", true},
     };
 
     CheckResult result = check(R"(
@@ -1663,7 +1661,6 @@ TEST_CASE_FIXTURE(Fixture, "call_o_with_another_argument_after_foo_was_quantifie
 {
     ScopedFastFlag sff[]{
         {"LuauLowerBoundsCalculation", true},
-        {"LuauQuantifyConstrained", true},
     };
 
     CheckResult result = check(R"(

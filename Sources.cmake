@@ -66,6 +66,9 @@ target_sources(Luau.CodeGen PRIVATE
 
 # Luau.Analysis Sources
 target_sources(Luau.Analysis PRIVATE
+    Analysis/include/Luau/Anyification.h
+    Analysis/include/Luau/ApplyTypeFunction.h
+    Analysis/include/Luau/AstJsonEncoder.h
     Analysis/include/Luau/AstQuery.h
     Analysis/include/Luau/Autocomplete.h
     Analysis/include/Luau/BuiltinDefinitions.h
@@ -81,7 +84,7 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/include/Luau/Frontend.h
     Analysis/include/Luau/Instantiation.h
     Analysis/include/Luau/IostreamHelpers.h
-    Analysis/include/Luau/JsonEncoder.h
+    Analysis/include/Luau/JsonEmitter.h
     Analysis/include/Luau/Linter.h
     Analysis/include/Luau/LValue.h
     Analysis/include/Luau/Module.h
@@ -113,6 +116,9 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/include/Luau/Variant.h
     Analysis/include/Luau/VisitTypeVar.h
 
+    Analysis/src/Anyification.cpp
+    Analysis/src/ApplyTypeFunction.cpp
+    Analysis/src/AstJsonEncoder.cpp
     Analysis/src/AstQuery.cpp
     Analysis/src/Autocomplete.cpp
     Analysis/src/BuiltinDefinitions.cpp
@@ -122,11 +128,12 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/src/ConstraintGraphBuilder.cpp
     Analysis/src/ConstraintSolver.cpp
     Analysis/src/ConstraintSolverLogger.cpp
+    Analysis/src/EmbeddedBuiltinDefinitions.cpp
     Analysis/src/Error.cpp
     Analysis/src/Frontend.cpp
     Analysis/src/Instantiation.cpp
     Analysis/src/IostreamHelpers.cpp
-    Analysis/src/JsonEncoder.cpp
+    Analysis/src/JsonEmitter.cpp
     Analysis/src/Linter.cpp
     Analysis/src/LValue.cpp
     Analysis/src/Module.cpp
@@ -151,7 +158,6 @@ target_sources(Luau.Analysis PRIVATE
     Analysis/src/TypeVar.cpp
     Analysis/src/Unifiable.cpp
     Analysis/src/Unifier.cpp
-    Analysis/src/EmbeddedBuiltinDefinitions.cpp
 )
 
 # Luau.VM Sources
@@ -255,6 +261,7 @@ if(TARGET Luau.UnitTest)
         tests/ScopedFlags.h
         tests/Fixture.cpp
         tests/AssemblyBuilderX64.test.cpp
+        tests/AstJsonEncoder.test.cpp
         tests/AstQuery.test.cpp
         tests/AstVisitor.test.cpp
         tests/Autocomplete.test.cpp
@@ -266,7 +273,7 @@ if(TARGET Luau.UnitTest)
         tests/CostModel.test.cpp
         tests/Error.test.cpp
         tests/Frontend.test.cpp
-        tests/JsonEncoder.test.cpp
+        tests/JsonEmitter.test.cpp
         tests/Lexer.test.cpp
         tests/Linter.test.cpp
         tests/LValue.test.cpp
@@ -341,4 +348,12 @@ if(TARGET Luau.Web)
     # Luau.Web Sources
     target_sources(Luau.Web PRIVATE
         CLI/Web.cpp)
+endif()
+
+if(TARGET Luau.Reduce.CLI)
+    target_sources(Luau.Reduce.CLI PRIVATE
+        CLI/Reduce.cpp
+        CLI/FileUtils.cpp
+        CLI/FileUtils.h
+    )
 endif()

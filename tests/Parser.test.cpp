@@ -682,20 +682,23 @@ TEST_CASE_FIXTURE(Fixture, "parse_numbers_binary")
 
 TEST_CASE_FIXTURE(Fixture, "parse_numbers_error")
 {
-    ScopedFastFlag luauErrorParseIntegerIssues{"LuauErrorParseIntegerIssues", true};
+    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
+    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", true};
 
     CHECK_EQ(getParseError("return 0b123"), "Malformed number");
     CHECK_EQ(getParseError("return 123x"), "Malformed number");
     CHECK_EQ(getParseError("return 0xg"), "Malformed number");
     CHECK_EQ(getParseError("return 0x0x123"), "Malformed number");
+    CHECK_EQ(getParseError("return 0xffffffffffffffffffffllllllg"), "Malformed number");
+    CHECK_EQ(getParseError("return 0x0xffffffffffffffffffffffffffff"), "Malformed number");
 }
 
-TEST_CASE_FIXTURE(Fixture, "parse_numbers_range_error")
+TEST_CASE_FIXTURE(Fixture, "parse_numbers_error_soft")
 {
-    ScopedFastFlag luauErrorParseIntegerIssues{"LuauErrorParseIntegerIssues", true};
+    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
+    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", false};
 
-    CHECK_EQ(getParseError("return 0x10000000000000000"), "Integer number value is out of range");
-    CHECK_EQ(getParseError("return 0b10000000000000000000000000000000000000000000000000000000000000000"), "Integer number value is out of range");
+    CHECK_EQ(getParseError("return 0x0x0x0x0x0x0x0"), "Malformed number");
 }
 
 TEST_CASE_FIXTURE(Fixture, "break_return_not_last_error")
@@ -899,6 +902,146 @@ TEST_CASE_FIXTURE(Fixture, "parse_compound_assignment_error_multiple")
     catch (const ParseErrors& e)
     {
         CHECK_EQ("Expected '=' when parsing assignment, got '+='", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_begin")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = `{{oops}}`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Double braces are not permitted within interpolated strings. Did you mean '\\{'?", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_mid")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = `{nice} {{oops}}`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Double braces are not permitted within interpolated strings. Did you mean '\\{'?", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    auto columnOfEndBraceError = [this](const char* code)
+    {
+        try
+        {
+            parse(code);
+            FAIL("Expected ParseErrors to be thrown");
+            return UINT_MAX;
+        }
+        catch (const ParseErrors& e)
+        {
+            CHECK_EQ(e.getErrors().size(), 1);
+
+            auto error = e.getErrors().front();
+            CHECK_EQ("Malformed interpolated string, did you forget to add a '}'?", error.getMessage());
+            return error.getLocation().begin.column;
+        }
+    };
+
+    // This makes sure that the error is coming from the brace itself
+    CHECK_EQ(columnOfEndBraceError("_ = `{a`"), columnOfEndBraceError("_ = `{abcdefg`"));
+    CHECK_NE(columnOfEndBraceError("_ = `{a`"), columnOfEndBraceError("_ =       `{a`"));
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace_in_table")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = { `{a` }
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ(e.getErrors().size(), 2);
+
+        CHECK_EQ("Malformed interpolated string, did you forget to add a '}'?", e.getErrors().front().getMessage());
+        CHECK_EQ("Expected '}' (to close '{' at line 2), got <eof>", e.getErrors().back().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_mid_without_end_brace_in_table")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = { `x {"y"} {z` }
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ(e.getErrors().size(), 2);
+
+        CHECK_EQ("Malformed interpolated string, did you forget to add a '}'?", e.getErrors().front().getMessage());
+        CHECK_EQ("Expected '}' (to close '{' at line 2), got <eof>", e.getErrors().back().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_as_type_fail")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            local a: `what` = `???`
+            local b: `what {"the"}` = `???`
+            local c: `what {"the"} heck` = `???`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& parseErrors)
+    {
+        CHECK_EQ(parseErrors.getErrors().size(), 3);
+
+        for (ParseError error : parseErrors.getErrors())
+            CHECK_EQ(error.getMessage(), "Interpolated string literals cannot be used as types");
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_call_without_parens")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = print `{42}`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Expected identifier when parsing expression, got `{", e.getErrors().front().getMessage());
     }
 }
 
@@ -2532,7 +2675,6 @@ end
 
 TEST_CASE_FIXTURE(Fixture, "error_message_for_using_function_as_type_annotation")
 {
-    ScopedFastFlag sff{"LuauParserFunctionKeywordAsTypeHelp", true};
     ParseResult result = tryParse(R"(
         type Foo = function
     )");

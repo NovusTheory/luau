@@ -14,11 +14,13 @@ def loadFailList():
     with open(FAIL_LIST_PATH) as f:
         return set(map(str.strip, f.readlines()))
 
+
 def safeParseInt(i, default=0):
     try:
         return int(i)
     except ValueError:
         return default
+
 
 class Handler(x.ContentHandler):
     def __init__(self, failList):
@@ -37,19 +39,17 @@ class Handler(x.ContentHandler):
 
         elif name == "OverallResultsAsserts":
             if self.currentTest:
-                failed = 0 != safeParseInt(attrs["failures"])
+                passed = 0 == safeParseInt(attrs["failures"])
 
                 dottedName = ".".join(self.currentTest)
-                shouldFail = dottedName in self.failList
 
-                if failed and not shouldFail:
-                    print("UNEXPECTED: {} should have passed".format(dottedName))
-                elif not failed and shouldFail:
-                    print("UNEXPECTED: {} should have failed".format(dottedName))
+                # Sometimes we get multiple XML trees for the same test. All of
+                # them must report a pass in order for us to consider the test
+                # to have passed.
+                r = self.results.get(dottedName, True)
+                self.results[dottedName] = r and passed
 
-                self.results[dottedName] = not failed
-
-        elif name == 'OverallResultsTestCases':
+        elif name == "OverallResultsTestCases":
             self.numSkippedTests = safeParseInt(attrs.get("skipped", 0))
 
     def endElement(self, name):
@@ -104,6 +104,12 @@ def main():
 
     p.wait()
 
+    for testName, passed in handler.results.items():
+        if passed and testName in failList:
+            print("UNEXPECTED: {} should have failed".format(testName))
+        elif not passed and testName not in failList:
+            print("UNEXPECTED: {} should have passed".format(testName))
+
     if args.write:
         newFailList = sorted(
             (
@@ -119,17 +125,24 @@ def main():
         print("Updated faillist.txt")
 
     if handler.numSkippedTests > 0:
-        print('{} test(s) were skipped!  That probably means that a test segfaulted!'.format(handler.numSkippedTests), file=sys.stderr)
+        print(
+            "{} test(s) were skipped!  That probably means that a test segfaulted!".format(
+                handler.numSkippedTests
+            ),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    sys.exit(
-        0
-        if all(
-            not passed == (dottedName in failList)
-            for dottedName, passed in handler.results.items()
-        )
-        else 1
+    ok = all(
+        not passed == (dottedName in failList)
+        for dottedName, passed in handler.results.items()
     )
+
+    if ok:
+        print("Everything in order!", file=sys.stderr)
+
+    sys.exit(0 if ok else 1)
+
 
 if __name__ == "__main__":
     main()

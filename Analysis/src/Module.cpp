@@ -15,9 +15,12 @@
 #include <algorithm>
 
 LUAU_FASTFLAG(LuauLowerBoundsCalculation);
-LUAU_FASTFLAG(LuauNormalizeFlagIsConservative);
 LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution);
 LUAU_FASTFLAGVARIABLE(LuauForceExportSurfacesToBeNormal, false);
+LUAU_FASTFLAGVARIABLE(LuauClonePublicInterfaceLess, false);
+LUAU_FASTFLAG(LuauSubstitutionReentrant);
+LUAU_FASTFLAG(LuauClassTypeVarsInSubstitution);
+LUAU_FASTFLAG(LuauSubstitutionFixMissingFields);
 
 namespace Luau
 {
@@ -87,6 +90,118 @@ struct ForceNormal : TypeVarOnceVisitor
     }
 };
 
+struct ClonePublicInterface : Substitution
+{
+    NotNull<Module> module;
+
+    ClonePublicInterface(const TxnLog* log, Module* module)
+        : Substitution(log, &module->interfaceTypes)
+        , module(module)
+    {
+        LUAU_ASSERT(module);
+    }
+
+    bool isDirty(TypeId ty) override
+    {
+        if (ty->owningArena == &module->internalTypes)
+            return true;
+
+        if (const FunctionTypeVar* ftv = get<FunctionTypeVar>(ty))
+            return ftv->level.level != 0;
+        if (const TableTypeVar* ttv = get<TableTypeVar>(ty))
+            return ttv->level.level != 0;
+        return false;
+    }
+
+    bool isDirty(TypePackId tp) override
+    {
+        return tp->owningArena == &module->internalTypes;
+    }
+
+    TypeId clean(TypeId ty) override
+    {
+        TypeId result = clone(ty);
+
+        if (FunctionTypeVar* ftv = getMutable<FunctionTypeVar>(result))
+            ftv->level = TypeLevel{0, 0};
+        else if (TableTypeVar* ttv = getMutable<TableTypeVar>(result))
+            ttv->level = TypeLevel{0, 0};
+
+        return result;
+    }
+
+    TypePackId clean(TypePackId tp) override
+    {
+        return clone(tp);
+    }
+
+    TypeId cloneType(TypeId ty)
+    {
+        LUAU_ASSERT(FFlag::LuauSubstitutionReentrant && FFlag::LuauSubstitutionFixMissingFields);
+
+        std::optional<TypeId> result = substitute(ty);
+        if (result)
+        {
+            return *result;
+        }
+        else
+        {
+            module->errors.push_back(TypeError{module->scopes[0].first, UnificationTooComplex{}});
+            return getSingletonTypes().errorRecoveryType();
+        }
+    }
+
+    TypePackId cloneTypePack(TypePackId tp)
+    {
+        LUAU_ASSERT(FFlag::LuauSubstitutionReentrant && FFlag::LuauSubstitutionFixMissingFields);
+
+        std::optional<TypePackId> result = substitute(tp);
+        if (result)
+        {
+            return *result;
+        }
+        else
+        {
+            module->errors.push_back(TypeError{module->scopes[0].first, UnificationTooComplex{}});
+            return getSingletonTypes().errorRecoveryTypePack();
+        }
+    }
+
+    TypeFun cloneTypeFun(const TypeFun& tf)
+    {
+        LUAU_ASSERT(FFlag::LuauSubstitutionReentrant && FFlag::LuauSubstitutionFixMissingFields);
+
+        std::vector<GenericTypeDefinition> typeParams;
+        std::vector<GenericTypePackDefinition> typePackParams;
+
+        for (GenericTypeDefinition typeParam : tf.typeParams)
+        {
+            TypeId ty = cloneType(typeParam.ty);
+            std::optional<TypeId> defaultValue;
+
+            if (typeParam.defaultValue)
+                defaultValue = cloneType(*typeParam.defaultValue);
+
+            typeParams.push_back(GenericTypeDefinition{ty, defaultValue});
+        }
+
+        for (GenericTypePackDefinition typePackParam : tf.typePackParams)
+        {
+            TypePackId tp = cloneTypePack(typePackParam.tp);
+            std::optional<TypePackId> defaultValue;
+
+            if (typePackParam.defaultValue)
+                defaultValue = cloneTypePack(*typePackParam.defaultValue);
+
+            typePackParams.push_back(GenericTypePackDefinition{tp, defaultValue});
+        }
+
+        TypeId type = cloneType(tf.type);
+
+        return TypeFun{typeParams, typePackParams, type};
+    }
+};
+
 Module::~Module()
 {
     unfreeze(interfaceTypes);
@@ -107,12 +222,21 @@ void Module::clonePublicInterface(InternalErrorReporter& ice)
     std::unordered_map<Name, TypeFun>* exportedTypeBindings =
         FFlag::DebugLuauDeferredConstraintResolution ? nullptr : &moduleScope->exportedTypeBindings;
 
-    returnType = clone(returnType, interfaceTypes, cloneState);
+    TxnLog log;
+    ClonePublicInterface clonePublicInterface{&log, this};
+
+    if (FFlag::LuauClonePublicInterfaceLess)
+        returnType = clonePublicInterface.cloneTypePack(returnType);
+    else
+        returnType = clone(returnType, interfaceTypes, cloneState);
 
     moduleScope->returnType = returnType;
     if (varargPack)
     {
-        varargPack = clone(*varargPack, interfaceTypes, cloneState);
+        if (FFlag::LuauClonePublicInterfaceLess)
+            varargPack = clonePublicInterface.cloneTypePack(*varargPack);
+        else
+            varargPack = clone(*varargPack, interfaceTypes, cloneState);
         moduleScope->varargPack = varargPack;
     }
 
@@ -120,12 +244,12 @@ void Module::clonePublicInterface(InternalErrorReporter& ice)
 
     if (FFlag::LuauLowerBoundsCalculation)
     {
-        normalize(returnType, interfaceTypes, ice);
+        normalize(returnType, NotNull{this}, ice);
         if (FFlag::LuauForceExportSurfacesToBeNormal)
             forceNormal.traverse(returnType);
         if (varargPack)
         {
-            normalize(*varargPack, interfaceTypes, ice);
+            normalize(*varargPack, NotNull{this}, ice);
             if (FFlag::LuauForceExportSurfacesToBeNormal)
                 forceNormal.traverse(*varargPack);
         }
@@ -135,25 +259,25 @@ void Module::clonePublicInterface(InternalErrorReporter& ice)
     {
         for (auto& [name, tf] : *exportedTypeBindings)
         {
-            tf = clone(tf, interfaceTypes, cloneState);
+            if (FFlag::LuauClonePublicInterfaceLess)
+                tf = clonePublicInterface.cloneTypeFun(tf);
+            else
+                tf = clone(tf, interfaceTypes, cloneState);
             if (FFlag::LuauLowerBoundsCalculation)
             {
-                normalize(tf.type, interfaceTypes, ice);
+                normalize(tf.type, NotNull{this}, ice);
 
-                if (FFlag::LuauNormalizeFlagIsConservative)
+                // We're about to freeze the memory.  We know that the flag is conservative by design.  Cyclic tables
+                // won't be marked normal.  If the types aren't normal by now, they never will be.
+                forceNormal.traverse(tf.type);
+                for (GenericTypeDefinition param : tf.typeParams)
                 {
-                    // We're about to freeze the memory.  We know that the flag is conservative by design.  Cyclic tables
-                    // won't be marked normal.  If the types aren't normal by now, they never will be.
-                    forceNormal.traverse(tf.type);
-                    for (GenericTypeDefinition param : tf.typeParams)
-                    {
-                        forceNormal.traverse(param.ty);
+                    forceNormal.traverse(param.ty);
 
-                        if (param.defaultValue)
-                        {
-                            normalize(*param.defaultValue, interfaceTypes, ice);
-                            forceNormal.traverse(*param.defaultValue);
-                        }
+                    if (param.defaultValue)
+                    {
+                        normalize(*param.defaultValue, NotNull{this}, ice);
+                        forceNormal.traverse(*param.defaultValue);
                     }
                 }
             }
@@ -172,10 +296,13 @@ void Module::clonePublicInterface(InternalErrorReporter& ice)
 
     for (auto& [name, ty] : declaredGlobals)
     {
-        ty = clone(ty, interfaceTypes, cloneState);
+        if (FFlag::LuauClonePublicInterfaceLess)
+            ty = clonePublicInterface.cloneType(ty);
+        else
+            ty = clone(ty, interfaceTypes, cloneState);
         if (FFlag::LuauLowerBoundsCalculation)
         {
-            normalize(ty, interfaceTypes, ice);
+            normalize(ty, NotNull{this}, ice);
 
             if (FFlag::LuauForceExportSurfacesToBeNormal)
                 forceNormal.traverse(ty);

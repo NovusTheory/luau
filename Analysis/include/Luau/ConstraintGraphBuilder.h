@@ -28,6 +28,7 @@ struct ConstraintGraphBuilder
     std::vector<std::pair<Location, ScopePtr>> scopes;
 
     ModuleName moduleName;
+    ModulePtr module;
     SingletonTypes& singletonTypes;
     const NotNull<TypeArena> arena;
     // The root scope of the module we're generating constraints for.
@@ -42,6 +43,8 @@ struct ConstraintGraphBuilder
     DenseHashMap<const AstType*, TypeId> astResolvedTypes{nullptr};
     // Type packs resolved from type annotations. Analogous to astTypePacks.
     DenseHashMap<const AstTypePack*, TypePackId> astResolvedTypePacks{nullptr};
+    // Defining scopes for AST nodes.
+    DenseHashMap<const AstStatTypeAlias*, ScopePtr> astTypeAliasDefiningScopes{nullptr};
 
     int recursionCount = 0;
 
@@ -51,9 +54,9 @@ struct ConstraintGraphBuilder
     // Occasionally constraint generation needs to produce an ICE.
     const NotNull<InternalErrorReporter> ice;
 
-    NotNull<Scope> globalScope;
+    ScopePtr globalScope;
 
-    ConstraintGraphBuilder(const ModuleName& moduleName, TypeArena* arena, NotNull<InternalErrorReporter> ice, NotNull<Scope> globalScope);
+    ConstraintGraphBuilder(const ModuleName& moduleName, ModulePtr module, TypeArena* arena, NotNull<InternalErrorReporter> ice, const ScopePtr& globalScope);
 
     /**
      * Fabricates a new free type belonging to a given scope.
@@ -69,10 +72,10 @@ struct ConstraintGraphBuilder
 
     /**
      * Fabricates a scope that is a child of another scope.
-     * @param location the lexical extent of the scope in the source code.
+     * @param node the lexical node that the scope belongs to.
      * @param parent the parent scope of the new scope. Must not be null.
      */
-    ScopePtr childScope(Location location, const ScopePtr& parent);
+    ScopePtr childScope(AstNode* node, const ScopePtr& parent);
 
     /**
      * Adds a new constraint with no dependencies to a given scope.
@@ -101,12 +104,18 @@ struct ConstraintGraphBuilder
     void visit(const ScopePtr& scope, AstStatBlock* block);
     void visit(const ScopePtr& scope, AstStatLocal* local);
     void visit(const ScopePtr& scope, AstStatFor* for_);
+    void visit(const ScopePtr& scope, AstStatWhile* while_);
+    void visit(const ScopePtr& scope, AstStatRepeat* repeat);
     void visit(const ScopePtr& scope, AstStatLocalFunction* function);
     void visit(const ScopePtr& scope, AstStatFunction* function);
     void visit(const ScopePtr& scope, AstStatReturn* ret);
     void visit(const ScopePtr& scope, AstStatAssign* assign);
+    void visit(const ScopePtr& scope, AstStatCompoundAssign* assign);
     void visit(const ScopePtr& scope, AstStatIf* ifStatement);
     void visit(const ScopePtr& scope, AstStatTypeAlias* alias);
+    void visit(const ScopePtr& scope, AstStatDeclareGlobal* declareGlobal);
+    void visit(const ScopePtr& scope, AstStatDeclareClass* declareClass);
+    void visit(const ScopePtr& scope, AstStatDeclareFunction* declareFunction);
 
     TypePackId checkExprList(const ScopePtr& scope, const AstArray<AstExpr*>& exprs);
 
@@ -126,6 +135,8 @@ struct ConstraintGraphBuilder
     TypeId check(const ScopePtr& scope, AstExprIndexExpr* indexExpr);
     TypeId check(const ScopePtr& scope, AstExprUnary* unary);
     TypeId check(const ScopePtr& scope, AstExprBinary* binary);
+    TypeId check(const ScopePtr& scope, AstExprIfElse* ifElse);
+    TypeId check(const ScopePtr& scope, AstExprTypeAssertion* typeAssert);
 
     struct FunctionSignature
     {
@@ -153,9 +164,10 @@ struct ConstraintGraphBuilder
      * Resolves a type from its AST annotation.
      * @param scope the scope that the type annotation appears within.
      * @param ty the AST annotation to resolve.
+     * @param topLevel whether the annotation is a "top-level" annotation.
      * @return the type of the AST annotation.
      **/
-    TypeId resolveType(const ScopePtr& scope, AstType* ty);
+    TypeId resolveType(const ScopePtr& scope, AstType* ty, bool topLevel = false);
 
     /**
      * Resolves a type pack from its AST annotation.

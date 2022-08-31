@@ -152,7 +152,9 @@ struct Frontend
     void registerBuiltinDefinition(const std::string& name, std::function<void(TypeChecker&, ScopePtr)>);
     void applyBuiltinDefinitionToEnvironment(const std::string& environmentName, const std::string& definitionName);
 
-    NotNull<Scope> getGlobalScope();
+    LoadDefinitionFileResult loadDefinitionFile(std::string_view source, const std::string& packageName);
+
+    ScopePtr getGlobalScope();
 
 private:
     ModulePtr check(const SourceModule& sourceModule, Mode mode, const ScopePtr& environmentScope);
@@ -164,12 +166,12 @@ private:
 
     static LintResult classifyLints(const std::vector<LintWarning>& warnings, const Config& config);
 
-    ScopePtr getModuleEnvironment(const SourceModule& module, const Config& config);
+    ScopePtr getModuleEnvironment(const SourceModule& module, const Config& config, bool forAutocomplete = false);
 
     std::unordered_map<std::string, ScopePtr> environments;
     std::unordered_map<std::string, std::function<void(TypeChecker&, ScopePtr)>> builtinDefinitions;
 
-    std::unique_ptr<Scope> globalScope;
+    ScopePtr globalScope;
 
 public:
     FileResolver* fileResolver;
@@ -180,6 +182,7 @@ public:
     ConfigResolver* configResolver;
     FrontendOptions options;
     InternalErrorReporter iceHandler;
+    TypeArena globalTypes;
     TypeArena arenaForAutocomplete;
 
     std::unordered_map<ModuleName, SourceNode> sourceNodes;

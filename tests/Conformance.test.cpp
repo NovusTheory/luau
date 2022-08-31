@@ -70,8 +70,8 @@ static int lua_loadstring(lua_State* L)
         return 1;
 
     lua_pushnil(L);
-    lua_insert(L, -2); /* put before error message */
-    return 2;          /* return nil plus error message */
+    lua_insert(L, -2); // put before error message
+    return 2;          // return nil plus error message
 }
 
 static int lua_vector(lua_State* L)
@@ -244,8 +244,6 @@ TEST_CASE("Assert")
 
 TEST_CASE("Basic")
 {
-    ScopedFastFlag sff("LuauLenTM", true);
-
     runConformance("basic.lua");
 }
 
@@ -291,7 +289,17 @@ TEST_CASE("Clear")
 
 TEST_CASE("Strings")
 {
+    ScopedFastFlag sff{"LuauTostringFormatSpecifier", true};
+
     runConformance("strings.lua");
+}
+
+TEST_CASE("StringInterp")
+{
+    ScopedFastFlag sffInterpStrings{"LuauInterpolatedStringBaseSupport", true};
+    ScopedFastFlag sffTostringFormat{"LuauTostringFormatSpecifier", true};
+
+    runConformance("stringinterp.lua");
 }
 
 TEST_CASE("VarArg")
@@ -316,9 +324,6 @@ TEST_CASE("Errors")
 
 TEST_CASE("Events")
 {
-    ScopedFastFlag sff1("LuauLenTM", true);
-    ScopedFastFlag sff2("LuauBetterNewindex", true);
-
     runConformance("events.lua");
 }
 
@@ -713,6 +718,23 @@ TEST_CASE("Reference")
 
     lua_gc(L, LUA_GCCOLLECT, 0);
     CHECK(dtorhits == 2);
+}
+
+TEST_CASE("NewUserdataOverflow")
+{
+    StateRef globalState(luaL_newstate(), lua_close);
+    lua_State* L = globalState.get();
+
+    lua_pushcfunction(L, [](lua_State* L1) {
+        // The following userdata request might cause an overflow.
+        lua_newuserdatadtor(L1, SIZE_MAX, [](void* d){});
+        // The overflow might segfault in the following call.
+        lua_getmetatable(L1, -1);
+        return 0;
+    }, nullptr);
+
+    CHECK(lua_pcall(L, 0, 0, 0) == LUA_ERRRUN);
+    CHECK(strcmp(lua_tostring(L, -1), "memory allocation error: block too big") == 0);
 }
 
 TEST_CASE("ApiTables")
